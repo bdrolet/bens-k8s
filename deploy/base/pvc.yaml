@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: devbox-workspace
+  namespace: devbox
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # GKE Autopilot defaults to the standard-rwo StorageClass (SSD-backed PD).
+  resources:
+    requests:
+      storage: 10Gi
