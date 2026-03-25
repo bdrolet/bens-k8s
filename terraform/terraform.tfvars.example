@@ -1,0 +1,3 @@
+project_id   = "bens-project-462804"
+region       = "us-central1"
+cluster_name = "bens-k8s"
