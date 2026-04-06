@@ -14,5 +14,8 @@ override.tf.json
 *.json
 !terraform.tfvars.example
 
+# K8s secrets (apply manually, don't commit real credentials)
+k8s/**/secret.yaml
+
 # OS
 .DS_Store
