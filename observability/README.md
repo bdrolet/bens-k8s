@@ -1,18 +1,29 @@
 # Observability Stack
 
-Self-hosted LGTM (Loki + Grafana + Tempo + Mimir/Prometheus) with an OpenTelemetry Collector DaemonSet.
-Runs in the `observability` namespace on the GKE Autopilot cluster.
+Two destinations, split by where the signal originates:
+
+- **Self-hosted LGTM** (Loki + Grafana + Tempo + Mimir/Prometheus) with an OpenTelemetry Collector
+  DaemonSet, for **app-level** signals. Runs in the `observability` namespace on the GKE Autopilot cluster.
+- **Grafana Cloud**, for **infrastructure and billing** signals the in-cluster Collector can't see —
+  fed by Grafana Alloy and the billing-exporter CronJob.
 
 **Signals collected:**
 
-| Signal  | How                                      | Backend    |
-|---------|------------------------------------------|------------|
-| Traces  | App → OTel SDK → Collector OTLP → Tempo  | Tempo      |
-| Metrics | App → OTel SDK → Collector OTLP → Prometheus scrape endpoint | Prometheus |
-| Logs    | App → OTel SDK → Collector OTLP → Loki   | Loki       |
+| Signal  | How                                                          | Backend       |
+|---------|-------------------------------------------------------------|---------------|
+| Traces  | App → OTel SDK → Collector OTLP → Tempo                      | self-hosted   |
+| Metrics | App → OTel SDK → Collector OTLP → Prometheus scrape endpoint | self-hosted   |
+| Logs    | App → OTel SDK → Collector OTLP → Loki                       | self-hosted   |
+| GCP infra metrics | Cloud Monitoring → Alloy → `remote_write`          | Grafana Cloud |
+| GCP billing | BigQuery → billing-exporter CronJob → OTLP               | Grafana Cloud |
+
+GCP infra metrics come from Grafana Alloy (`observability/alloy/`), which scrapes Cloud Monitoring
+(ALB, Pub/Sub, GKE, Artifact Registry) and `remote_write`s to Grafana Cloud Prometheus. GCP billing
+comes from the billing-exporter CronJob (`k8s/billing-exporter/`), which queries BigQuery and pushes
+cost metrics to Grafana Cloud via OTLP.
 
 > **GKE Autopilot note:** `hostPath` volumes and `hostNetwork` are blocked by Autopilot's workload
-> isolation policy, so the OTel `filelog` receiver (stdout tailing) cannot be used. All three signals
+> isolation policy, so the OTel `filelog` receiver (stdout tailing) cannot be used. All app signals
 > flow through the OTel SDK instead. Stdout logs from uninstrumented containers are not captured.
 
 ---
@@ -89,6 +100,23 @@ kubectl get gateway shared-gateway -n infra
 ```
 
 TLS is handled by the wildcard cert in the shared Certificate Manager cert map.
+
+### 6. Grafana Alloy (GCP infra metrics → Grafana Cloud)
+
+Create the Grafana Cloud Prometheus credentials secret, then install Alloy via Helm:
+
+```bash
+cp observability/alloy/secret.yaml.example observability/alloy/secret.yaml
+# Edit secret.yaml — set Grafana Cloud Prometheus url / username / password
+kubectl apply -f observability/alloy/secret.yaml
+
+kubectl apply -f observability/alloy/configmap.yaml
+helm upgrade --install alloy grafana/alloy \
+  -n observability -f observability/alloy/values.yaml
+```
+
+The billing-exporter CronJob is deployed separately from `k8s/billing-exporter/` and pushes to
+Grafana Cloud via OTLP (secret `grafana-cloud-otlp` in the `apps` namespace).
 
 ---
 
@@ -204,7 +232,8 @@ run `helm upgrade` again.
 ## Uninstall
 
 ```bash
-helm uninstall grafana loki tempo prometheus -n observability
+helm uninstall grafana loki tempo prometheus alloy -n observability
+kubectl delete -f observability/alloy/configmap.yaml
 kubectl delete -f observability/collector/cluster-collector.yaml
 kubectl delete -f observability/collector/daemonset.yaml
 kubectl delete -f observability/collector/config.yaml

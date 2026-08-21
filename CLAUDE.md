@@ -23,7 +23,9 @@ k8s/                Kubernetes manifests, one directory per workload
   openclaw/         OpenClaw gateway
   postgres/         Shared Postgres 16 (namespace: apps)
   redis/            Redis (namespace: apps)
-observability/      LGTM stack (Loki, Grafana, Tempo, Prometheus) + OTel Collector
+  billing-exporter/ CronJob: GCP billing (BigQuery) → OTLP metrics to Grafana Cloud
+billing-exporter/   Python source + Dockerfile for the billing-exporter image
+observability/      Self-hosted LGTM stack + OTel Collector; Grafana Alloy (GCP infra metrics → Grafana Cloud)
 devbox/             Long-running workspace pod for experiments
 ```
 
@@ -31,9 +33,9 @@ devbox/             Long-running workspace pod for experiments
 
 | Namespace | What lives there |
 |-----------|-----------------|
-| `apps` | All application workloads (inbox, blog, openclaw, postgres, redis) |
+| `apps` | All application workloads (inbox, blog, openclaw, postgres, redis, billing-exporter) |
 | `infra` | Shared Gateway, ReferenceGrant |
-| `observability` | LGTM stack, OTel Collector |
+| `observability` | Self-hosted LGTM stack, OTel Collector, Grafana Alloy |
 | `devbox` | Devbox workspace pod |
 
 ## Local setup
@@ -133,9 +135,15 @@ spec:
 
 ## Observability
 
-Apps instrument via the OpenTelemetry SDK (traces, metrics, logs). The OTel Collector DaemonSet receives OTLP on `localhost:4317` (gRPC) and `localhost:4318` (HTTP). Grafana is available at `grafana.drolet.cloud`.
+Two destinations, split by signal source:
 
-> GKE Autopilot blocks `hostPath` and `hostNetwork` — stdout log tailing is not available. All signals must flow through the OTel SDK.
+**Self-hosted LGTM** (`observability/`) — app-level signals. Apps instrument via the OpenTelemetry SDK (traces, metrics, logs). The OTel Collector DaemonSet receives OTLP on `localhost:4317` (gRPC) and `localhost:4318` (HTTP) and forwards to the self-hosted LGTM stack. Grafana is at `observability.drolet.cloud`.
+
+**Grafana Cloud** — infrastructure and billing signals the OTel Collector can't see:
+- **Grafana Alloy** (`observability/alloy/`) scrapes GCP Cloud Monitoring (ALB, Pub/Sub, GKE, Artifact Registry) and `remote_write`s to Grafana Cloud Prometheus.
+- **billing-exporter** (`k8s/billing-exporter/`) is a CronJob that queries GCP billing from BigQuery and pushes cost metrics to Grafana Cloud via OTLP.
+
+> GKE Autopilot blocks `hostPath` and `hostNetwork` — stdout log tailing is not available. All app signals must flow through the OTel SDK.
 
 ## KEDA
 
